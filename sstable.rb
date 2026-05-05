@@ -1,6 +1,7 @@
 class SSTable
   def initialize(file_name)
     @index = {}
+    @bloom_filters = BloomFilter.new(1000)
     # write-binary mode
     @file = File.open(file_name, 'wb')
   end
@@ -16,13 +17,16 @@ class SSTable
     @file.write(value_size)
     @file.write(value)
 
+    @bloom_filters.add(key)
     @index[key] = file_pos
   end
 
   def close
     file_pos = @file.pos
     Marshal.dump(@index, @file)
-    @file.write([file_pos].pack('Q>'))
+    bloom_file_pos = @file.pos
+    Marshal.dump(@bloom_filters, @file)
+    @file.write([file_pos, bloom_file_pos].pack('Q> Q>'))
     @file.close
   end
 end
@@ -30,8 +34,10 @@ end
 class SSTableReader
   def initialize(file_name)
     @file = File.open(file_name, 'rb')
-    @file.seek(-8, IO::SEEK_END)
-    index_offset = @file.read(8).unpack1('Q>')
+    @file.seek(-16, IO::SEEK_END)
+    index_offset, bloom_file_pos = @file.read(16).unpack('Q> Q>')
+    @file.seek(bloom_file_pos, IO::SEEK_SET)
+    @bloom_filters = Marshal.load(@file)
     @file.seek(index_offset, IO::SEEK_SET)
     @index = Marshal.load(@file)
   end
@@ -39,6 +45,9 @@ class SSTableReader
   def read_record(search_key)
     file_pos = @index[search_key]
     if file_pos == nil
+      return nil
+    end
+    if !@bloom_filters.might_contain?(search_key)
       return nil
     end
     @file.seek(file_pos, IO::SEEK_SET)
@@ -110,6 +119,37 @@ class MemTable
     block.call(node.key, node.value)
 
     traverse_node(node.right, &block)
+  end
+end
+
+class BloomFilter
+  def initialize(size)
+    @size = size
+    @bits = Array.new(size, false)
+    @num_hashes = 3
+  end
+
+  def get_indexes(key)
+    (1..@num_hashes).map do |i|
+      (key + i.to_s).hash % @size
+    end
+  end
+
+  def add(key)
+    indexes = get_indexes(key)
+    indexes.each do |i|
+      @bits[i] = true
+    end
+  end
+
+  def might_contain?(key)
+    indexes = get_indexes(key)
+    indexes.each do |i|
+      if @bits[i] == false
+        return false
+      end
+    end
+    return true
   end
 end
 
