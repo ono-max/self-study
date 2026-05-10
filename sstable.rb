@@ -153,6 +153,52 @@ class BloomFilter
   end
 end
 
+SSTableMetadata = Data.define(:file_name, :level, :min_key, :max_key) do
+  def covers?(key)
+    key >= min_key && key <= max_key
+  end
+end
+
+class RAMTracker
+  def initialize
+    @levels = {
+      0=>[],
+      1=>[],
+      2=>[]
+    }
+  end
+
+  def add_file(file_name, level, min_key, max_key)
+    file_meta = SSTableMetadata.new(file_name, level, min_key, max_key)
+    @levels[level] << file_meta
+
+    if level > 0
+      @levels[level].sort_by! {|f| f.min_key }
+    end
+  end
+
+  def find_files_to_search(search_key)
+    candidate_files = []
+    
+    @levels[0].each{|meta|
+      if meta.covers(search_key)
+        candidate_files << meta.file_name
+      end
+    }
+
+    (1..2).each{|level| 
+      @levels[level].each {|meta|
+        if meta.covers?(search_key)
+          @candidate_files << meta.file_name
+          break
+        end
+      }
+    }
+
+    return candidate_files
+
+  end
+end
 
 # 1. The database is online! Users start writing data.
 memtable = MemTable.new
