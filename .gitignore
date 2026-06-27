@@ -1,3 +1,4 @@
 data.sst
 toy_database.cask
 data.heap
+kafka/log/*
